@@ -1,0 +1,8 @@
+{
+  "name": "Семейный планер",
+  "short_name": "Планер",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
+  "icons": []
+}

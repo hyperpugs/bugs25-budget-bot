@@ -1,0 +1,23 @@
+app = "bug25-budget-bot"          # ← ЗАМЕНИ на уникальное имя (например budget-bot-777)
+primary_region = "ams"
+
+[build]
+  type = "docker"           # ← сборка через Dockerfile
+
+[env]
+  PORT = "8080"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  processes = ["app"]
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[services.ports]]
+  handlers = ["http"]
+  port = 80
+
+[processes]
+  app = "uvicorn app:app --host 0.0.0.0 --port $PORT"

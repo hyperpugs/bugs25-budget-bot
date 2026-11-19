@@ -1,0 +1,441 @@
+(function() {
+  const STORAGE_KEY = 'familyPlanerPro';
+  const CATEGORIES = [
+    { name: '🏠 Жильё', icon: '🏠' },
+    { name: '🛒 Продукты', icon: '🛒' },
+    { name: '🍽️ Кафе/рестораны', icon: '🍽️' },
+    { name: '🚗 Транспорт', icon: '🚗' },
+    { name: '📱 Связь/интернет', icon: '📱' },
+    { name: '💊 Здоровье', icon: '💊' },
+    { name: '🏃 Спорт', icon: '🏃' },
+    { name: '👕 Одежда/обувь', icon: '👕' },
+    { name: '🏠 Дом/быт', icon: '🧹' },
+    { name: '🐕 Собаки', icon: '🐕' },
+    { name: '🎮 Развлечения', icon: '🎮' },
+    { name: '🎁 Подарки', icon: '🎁' },
+    { name: '📚 Образование', icon: '📚' },
+    { name: '💳 Подписки', icon: '💿' },
+    { name: '🆘 Непредвиденное', icon: '⚠️' }
+  ];
+
+  // Хранилище
+  function loadStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return { months: [], goal: { name: 'Накопить', target: 0, current: 0 } };
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return { months: parsed, goal: { name: 'Накопить', target: 0, current: 0 } };
+      }
+      return parsed;
+    } catch (e) {
+      return { months: [], goal: { name: 'Накопить', target: 0, current: 0 } };
+    }
+  }
+  function saveStorage(data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function getMonth(label) {
+    const data = loadStorage();
+    return data.months.find(m => m.label === label) || null;
+  }
+
+  function calcStats(month) {
+    if (!month) return { income: 0, expense: 0, balance: 0, pct: 0 };
+    const totalExp = Object.values(month.categories).reduce((sum, cat) => sum + (cat.fact || 0), 0);
+    const bal = (month.income || 0) - totalExp;
+    const pct = month.income ? Math.round((totalExp / month.income) * 100) : 0;
+    return { income: month.income, expense: totalExp, balance: bal, pct };
+  }
+
+  function forecast(month) {
+    if (!month || !month.income) return { text: '—', color: '' };
+    const today = new Date();
+    const day = today.getDate();
+    const totalExp = Object.values(month.categories).reduce((s,c) => s + c.fact, 0);
+    const avgDaily = day > 0 ? totalExp / day : 0;
+    const daysInMonth = 30;
+    const predictedExp = avgDaily * daysInMonth;
+    const predictedBal = (month.income || 0) - predictedExp;
+    let text = predictedBal >= 0
+      ? `📅 ${predictedBal.toLocaleString()} ₽`
+      : `⚠️ ${Math.abs(predictedBal).toLocaleString()} ₽ дефицита`;
+    let color = predictedBal >= 0 ? '' : 'warn-bg';
+    return { text, color };
+  }
+
+  // Графики
+  let pie, line, bar;
+
+  function renderPieChart(month) {
+    const ctx = document.getElementById('pieChart').getContext('2d');
+    if (pie) pie.destroy();
+    if (!month) {
+      pie = new Chart(ctx, { type: 'pie', data: { labels: ['Нет данных'], datasets: [{ data: [1], backgroundColor: ['#cbd5e1'] }] } });
+      return;
+    }
+    const labels = []; const data = [];
+    const colors = ['#f59e0b','#f97316','#8b5cf6','#0ea5e9','#10b981','#f43f5e','#2563eb','#d1d5db','#ec4899','#fcd34d','#84cc11','#f87171','#b91c1c','#0f172a','#6b7280'];
+    Object.entries(month.categories).forEach(([name, val]) => {
+      if (val.fact > 0) { labels.push(name); data.push(val.fact); }
+    });
+    if (labels.length === 0) {
+      pie = new Chart(ctx, { type: 'pie', data: { labels: ['Расходов нет'], datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }] } });
+      return;
+    }
+    pie = new Chart(ctx, {
+      type: 'pie',
+      data: { labels: labels, datasets: [{ data: data, backgroundColor: colors.slice(0, labels.length), borderWidth: 0 }] },
+      options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 14 } } } }
+    });
+  }
+
+  function renderLineChart(months) {
+    const ctx = document.getElementById('lineChart').getContext('2d');
+    if (line) line.destroy();
+    const sorted = [...months].sort((a,b) => a.label.localeCompare(b.label));
+    const labels = sorted.map(m => m.label);
+    const balances = sorted.map(m => {
+      const exp = Object.values(m.categories).reduce((s,c) => s + c.fact, 0);
+      return (m.income || 0) - exp;
+    });
+    line = new Chart(ctx, {
+      type: 'line',
+      data: { labels: labels, datasets: [{ label: 'Остаток (₽)', data: balances, borderColor: '#0ea5e8', fill: true, tension: 0.2, pointBackgroundColor: '#0284c7', pointRadius: 4 }] },
+      options: {
+        scales: { y: { beginAtZero: false, grid: { color: 'var(--border)' } } },
+        plugins: { tooltip: { callbacks: { label: (ctx) => 'Остаток: ' + ctx.parsed.y.toLocaleString() + ' ₽' } } }
+      }
+    });
+  }
+
+  function renderBarChart(months, currentLabel) {
+    const ctx = document.getElementById('barChart').getContext('2d');
+    if (bar) bar.destroy();
+    const sorted = [...months].sort((a,b) => a.label.localeCompare(b.label));
+    const last6 = sorted.slice(-6);
+    const labels = last6.map(m => m.label);
+    const plans = last6.map(m => Object.values(m.categories).reduce((s,c) => s + c.plan, 0));
+    const facts = last6.map(m => Object.values(m.categories).reduce((s,c) => s + c.fact, 0));
+    bar = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          { label: 'План', data: plans, backgroundColor: 'rgba(59,130,246,0.2)', borderColor: '#3b82f6', borderWidth: 1 },
+          { label: 'Факт', data: facts, backgroundColor: '#f59e0b', borderColor: '#d97706', borderWidth: 1 }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'top' } },
+        scales: { y: { beginAtZero: true, grid: { color: 'var(--border)' } } }
+      }
+    });
+  }
+
+  // Напоминания
+  function loadReminders() {
+    try { return JSON.parse(localStorage.getItem('budgetReminders')) || []; } catch { return []; }
+  }
+  function saveReminders(reminders) {
+    localStorage.setItem('budgetReminders', JSON.stringify(reminders));
+  }
+  function renderReminders() {
+    const reminders = loadReminders();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const list = document.getElementById('remindersList');
+    const countSpan = document.getElementById('reminderCount');
+    const active = reminders.filter(r => !r.done && new Date(r.date) >= today);
+    countSpan.textContent = active.length;
+    list.innerHTML = active.map(r => {
+      const catName = CATEGORIES.find(c => c.name === r.category)?.icon + ' ' + r.category;
+      return `
+        <div class="reminder-item" data-id="${r.id}">
+          <span class="reminder-date">${r.date}</span>
+          <span style="flex:1;">${r.title} (${catName})</span>
+          <span class="reminder-repeat">${r.repeat ? '🔁' : ''}</span>
+          <span class="reminder-actions">
+            <button class="btn-remind btn-sm doneBtn" title="Выполнено">✅</button>
+            <button class="btn-sm danger-btn deleteBtn" title="Удалить">🗑</button>
+          </span>
+        </div>
+      `;
+    }).join('');
+    if (active.length === 0) list.innerHTML = '<p style="color:var(--muted);">Нет активных напоминаний</p>';
+    document.querySelectorAll('.doneBtn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const id = this.closest('.reminder-item').dataset.id;
+        const reminders = loadReminders();
+        const idx = reminders.findIndex(r => r.id === id);
+        if (idx !== -1) {
+          reminders[idx].done = true;
+          if (reminders[idx].repeat) {
+            const nextMonth = new Date(reminders[idx].date);
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            const newId = Date.now();
+            reminders.push({ id: newId, title: reminders[idx].title, date: nextMonth.toISOString().split('T')[0], category: reminders[idx].category, repeat: true, done: false });
+          }
+        }
+        saveReminders(reminders);
+        renderReminders();
+      });
+    });
+    document.querySelectorAll('.deleteBtn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const id = this.closest('.reminder-item').dataset.id;
+        let reminders = loadReminders();
+        reminders = reminders.filter(r => r.id !== id);
+        saveReminders(reminders);
+        renderReminders();
+      });
+    });
+  }
+
+  function populateReminderCategory() {
+    const sel = document.getElementById('remindCategory');
+    sel.innerHTML = CATEGORIES.map(c => `<option value="${c.name}">${c.icon} ${c.name}</option>`).join('');
+  }
+
+  // Обновление UI
+  function refreshUI(selectedLabel) {
+    const data = loadStorage();
+    const select = document.getElementById('monthSelect');
+    select.innerHTML = '';
+    data.months.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.label;
+      opt.textContent = m.label;
+      select.appendChild(opt);
+    });
+
+    let month = null;
+    if (selectedLabel) month = getMonth(selectedLabel);
+    else if (data.months.length > 0) { month = data.months[0]; selectedLabel = month.label; }
+    if (select.value !== selectedLabel) select.value = selectedLabel || '';
+
+    const stats = calcStats(month);
+    document.getElementById('summaryIncome').textContent = (stats.income || 0).toLocaleString() + ' ₽';
+    document.getElementById('summaryExpense').textContent = stats.expense.toLocaleString() + ' ₽';
+    document.getElementById('summaryBalance').textContent = stats.balance.toLocaleString() + ' ₽';
+    document.getElementById('pctText').textContent = stats.pct + '%';
+    const bar = document.getElementById('pctFill');
+    bar.style.width = stats.pct + '%';
+    bar.className = 'progress-fill' + (stats.pct > 80 ? ' danger' : stats.pct > 50 ? ' warn' : '');
+
+    const fc = forecast(month);
+    document.getElementById('forecastText').textContent = fc.text;
+    document.getElementById('forecastBlock').className = 'flex ' + (fc.color || '');
+
+    document.getElementById('goalName').value = data.goal.name;
+    document.getElementById('goalTarget').value = data.goal.target;
+    document.getElementById('goalCurrent').value = data.goal.current;
+    updateGoalProgress(data.goal);
+
+    const formDiv = document.getElementById('categoriesForm');
+    if (month) {
+      formDiv.innerHTML = CATEGORIES.map(c => {
+        const plan = (month.categories[c.name] || {}).plan || 0;
+        const fact = (month.categories[c.name] || {}).fact || 0;
+        const diff = fact - plan;
+        return `
+          <div>
+            <label>${c.icon} ${c.name}</label>
+            <div class="flex" style="gap:8px;">
+              <input type="number" class="planInput" data-cat="${c.name}" value="${plan}" placeholder="план" min="0" step="1">
+              <input type="number" class="factInput" data-cat="${c.name}" value="${fact}" placeholder="факт" min="0" step="1">
+            </div>
+            <div class="diff ${diff >= 0 ? 'neg' : 'pos'}" style="margin-top:4px; font-size:0.85rem;">
+              ${diff >= 0 ? '↑ +' : '↓ '}${Math.abs(diff).toLocaleString()} ₽
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      formDiv.innerHTML = '<p style="color:var(--muted);">Выберите или создайте месяц</p>';
+    }
+
+    renderPieChart(month);
+    renderLineChart(data.months);
+    renderBarChart(data.months, selectedLabel);
+    renderReminders();
+  }
+
+  function saveCurrentMonth() {
+    const label = document.getElementById('monthSelect').value;
+    if (!label) { alert('Выберите месяц'); return; }
+    const income = parseInt(prompt('Общий доход за месяц (₽):', '0')) || 0;
+    if (income < 0) { alert('Доход не может быть отрицательным'); return; }
+
+    const data = loadStorage();
+    const existingIdx = data.months.findIndex(m => m.label === label);
+    const categories = {};
+    CATEGORIES.forEach(c => {
+      const planInp = document.querySelector(`.planInput[data-cat="${c.name}"]`);
+      const factInp = document.querySelector(`.factInput[data-cat="${c.name}"]`);
+      categories[c.name] = {
+        plan: planInp ? parseInt(planInp.value) || 0 : 0,
+        fact: factInp ? parseInt(factInp.value) || 0 : 0
+      };
+    });
+
+    const monthData = { label: label, income: income, categories: categories };
+    if (existingIdx !== -1) data.months[existingIdx] = monthData;
+    else data.months.push(monthData);
+
+    saveStorage(data);
+    document.getElementById('saveStatus').textContent = '✅ Сохранено';
+    setTimeout(() => document.getElementById('saveStatus').textContent = '', 1500);
+    refreshUI(label);
+  }
+
+  function copyPrevPlan() {
+    const data = loadStorage();
+    const currentLabel = document.getElementById('monthSelect').value;
+    if (!currentLabel || data.months.length < 2) { alert('Нет предыдущего месяца'); return; }
+    const idx = data.months.findIndex(m => m.label === currentLabel);
+    if (idx <= 0) { alert('Нет предыдущего месяца'); return; }
+    const prev = data.months[idx - 1];
+    const newCats = {};
+    CATEGORIES.forEach(c => {
+      newCats[c.name] = { plan: prev.categories[c.name]?.plan || 0, fact: 0 };
+    });
+    const updated = data.months.map((m, i) => {
+      if (i === idx) return { ...m, categories: newCats };
+      return m;
+    });
+    saveStorage({ ...data, months: updated });
+    refreshUI(currentLabel);
+    alert('План скопирован из ' + prev.label);
+  }
+
+  function addNewMonth() {
+    const data = loadStorage();
+    const now = new Date();
+    let label = prompt('Название месяца (например, Март 2025):', formatMonth(now));
+    if (!label) return;
+    if (data.months.some(m => m.label === label)) { alert('Такой месяц уже есть'); return; }
+    const emptyCats = {};
+    CATEGORIES.forEach(c => { emptyCats[c.name] = { plan: 0, fact: 0 }; });
+    data.months.push({ label: label, income: 0, categories: emptyCats });
+    saveStorage(data);
+    refreshUI(label);
+  }
+
+  function formatMonth(d) {
+    const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    return months[d.getMonth()] + ' ' + (d.getFullYear());
+  }
+
+  function deleteMonth() {
+    const label = document.getElementById('monthSelect').value;
+    if (!label) return;
+    if (!confirm('Удалить месяц "' + label + '"?')) return;
+    const data = loadStorage();
+    data.months = data.months.filter(m => m.label !== label);
+    saveStorage(data);
+    refreshUI(data.months.length > 0 ? data.months[0].label : null);
+  }
+
+  function saveGoal() {
+    const name = document.getElementById('goalName').value.trim() || 'Цель';
+    const target = parseInt(document.getElementById('goalTarget').value) || 0;
+    const current = parseInt(document.getElementById('goalCurrent').value) || 0;
+    const data = loadStorage();
+    data.goal = { name, target, current };
+    saveStorage(data);
+    updateGoalProgress(data.goal);
+    alert('Цель обновлена');
+  }
+
+  function updateGoalProgress(goal) {
+    const pct = goal.target > 0 ? Math.round((goal.current / goal.target) * 100) : 0;
+    document.getElementById('goalProgress').style.width = pct + '%';
+    document.getElementById('goalPercent').textContent = pct + '%';
+  }
+
+  function exportCSV() {
+    const data = loadStorage();
+    if (data.months.length === 0) { alert('Нет данных для экспорта'); return; }
+    let csv = 'Месяц,Доход,Категория,План,Факт,Разница\n';
+    data.months.forEach(m => {
+      const expTotal = Object.values(m.categories).reduce((s,c) => s + c.fact, 0);
+      csv += `"${m.label}",${m.income},ИТОГО,,${expTotal},${m.income - expTotal}\n`;
+      CATEGORIES.forEach(c => {
+        const cat = m.categories[c.name] || { plan:0, fact:0 };
+        const diff = cat.fact - cat.plan;
+        csv += `"${m.label}",${m.income},"${c.name}",${cat.plan},${cat.fact},${diff}\n`;
+      });
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'budget.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Отправка в Telegram (кнопка)
+  async function sendToTelegram() {
+    const income = document.getElementById('summaryIncome')?.textContent.replace(' ₽', '') || '0';
+    const expense = document.getElementById('summaryExpense')?.textContent.replace(' ₽', '') || '0';
+    const balance = document.getElementById('summaryBalance')?.textContent.replace(' ₽', '') || '0';
+    const text = `📊 Планер: доход ${income}, расход ${expense}, остаток ${balance}`;
+    try {
+      const r = await fetch('/send?text=' + encodeURIComponent(text));
+      if (r.ok) {
+        const status = document.createElement('div');
+        status.style.position = 'fixed'; top: '20px'; right: '20px';
+        status.style.background = '#0088cc'; color = 'white'; padding = '10px 20px';
+        status.style.borderRadius = '8px'; zIndex = 1000;
+        status.textContent = '✅ Отправлено в Telegram';
+        document.body.appendChild(status);
+        setTimeout(() => status.remove(), 3000);
+      }
+    } catch {
+      alert('Не удалось отправить. Бот запущен?');
+    }
+  }
+
+  // Привязка событий
+  document.getElementById('saveMonth')?.addEventListener('click', saveCurrentMonth);
+  document.getElementById('btnCopyPrev')?.addEventListener('click', copyPrevPlan);
+  document.getElementById('btnAddMonth')?.addEventListener('click', addNewMonth);
+  document.getElementById('btnDeleteMonth')?.addEventListener('click', deleteMonth);
+  document.getElementById('btnExport')?.addEventListener('click', exportCSV);
+  document.getElementById('saveGoal')?.addEventListener('click', saveGoal);
+  document.getElementById('monthSelect')?.addEventListener('change', function() { refreshUI(this.value); });
+  document.getElementById('addReminder')?.addEventListener('click', function() {
+    const title = document.getElementById('remindTitle').value.trim();
+    const date = document.getElementById('remindDate').value;
+    const category = document.getElementById('remindCategory').value;
+    const repeat = document.getElementById('remindRepeat').checked;
+    if (!title || !date || !category) { alert('Заполните'); return; }
+    const reminders = loadReminders();
+    reminders.push({ id: Date.now(), title, date, category, repeat, done: false });
+    saveReminders(reminders);
+    document.getElementById('remindTitle').value = '';
+    document.getElementById('remindRepeat').checked = false;
+    renderReminders();
+  });
+
+  // Тема
+  function setTheme(dark) {
+    document.body.setAttribute('data-theme', dark ? 'dark' : 'light');
+    document.getElementById('themeIcon').textContent = dark ? '☀️' : '🌓';
+  }
+  document.getElementById('themeToggle')?.addEventListener('click', () => {
+    const current = document.body.getAttribute('data-theme') === 'dark';
+    setTheme(!current);
+    localStorage.setItem('budgetTheme', !current ? 'dark' : 'light');
+  });
+  const savedTheme = localStorage.getItem('budgetTheme') || 'light';
+  setTheme(savedTheme === 'dark');
+
+  // Старт
+  populateReminderCategory();
+  const data = loadStorage();
+  if (data.months.length > 0) refreshUI(data.months[0].label);
+  else refreshUI(null);
+})();
