@@ -1,4 +1,5 @@
 name: Deploy to Fly
+
 on:
   push:
     branches: [main]
@@ -17,7 +18,7 @@ jobs:
 
       - name: Deploy app
         run: |
-          flyctl deploy --remote-only --app budget-bot
+          flyctl deploy --remote-only --app bug25-budget-bot
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
